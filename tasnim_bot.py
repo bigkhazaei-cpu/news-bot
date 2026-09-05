@@ -53,7 +53,7 @@ def fetch_market_prices():
                 supabase.table("market_prices").insert(price_data).execute()
                 print("💾 قیمت بازار در Supabase ذخیره شد.")
             except Exception as db_err:
-                print(f"⚠️ خطا در ذخیره قیمت در دیتابیس (جدول market_prices را بررسی کنید): {db_err}")
+                print(f"⚠️ خطا در ذخیره قیمت در دیتابیس: {db_err}")
                 
             return price_data
     except Exception as e:
@@ -71,7 +71,7 @@ def summarize_text(text):
     try:
         prompt = f"این خبر را در حداکثر دو جمله کوتاه و مفید به زبان فارسی خلاصه کن:\n\n{text}"
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash',  # مدل اصلاح شده
+            model='gemini-1.5-flash',
             contents=prompt,
         )
         return response.text.strip()
@@ -80,10 +80,37 @@ def summarize_text(text):
         return text[:150] + "..."
 
 # ----------------------------------------------------
-# ۴. استخراج اخبار از منابع مختلف (RSS)
+# ۴. استخراج لینک تصویر خبر
+# ----------------------------------------------------
+def extract_image_url(entry):
+    """استخراج لینک تصویر از فید RSS"""
+    # ۱. بررسی تگ enclosures
+    if hasattr(entry, 'enclosures') and entry.enclosures:
+        for enc in entry.enclosures:
+            if enc.get('type', '').startswith('image/'):
+                return enc.get('href')
+                
+    # ۲. بررسی تگ media_content
+    if hasattr(entry, 'media_content') and entry.media_content:
+        for media in entry.media_content:
+            if 'url' in media:
+                return media['url']
+                
+    # ۳. جستجوی تگ img در متن یا خلاصه خبر
+    raw_summary = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
+    if raw_summary:
+        soup = BeautifulSoup(raw_summary, "html.parser")
+        img_tag = soup.find("img")
+        if img_tag and img_tag.get("src"):
+            return img_tag["src"]
+            
+    return None
+
+# ----------------------------------------------------
+# ۵. استخراج اخبار از منابع مختلف (RSS)
 # ----------------------------------------------------
 def fetch_multi_source_news():
-    """استخراج جدیدترین اخبار از تسنیم، ایرنا و ایسنا"""
+    """استخراج جدیدترین اخبار از تسنیم، ایرنا و ایسنا به همراه تصاویر"""
     sources = {
         "تسنیم": "https://www.tasnimnews.com/fa/rss/feed/0/7/0/",
         "ایرنا": "https://www.irna.ir/rss",
@@ -105,15 +132,19 @@ def fetch_multi_source_news():
                 clean_summary = BeautifulSoup(raw_summary, "html.parser").get_text() if raw_summary else title
                 final_summary = summarize_text(clean_summary)
                 
+                # دریافت لینک تصویر خبر
+                image_url = extract_image_url(entry)
+                
                 news_item = {
                     "title": title,
                     "link": link,
                     "summary": final_summary,
-                    "source": source_name
+                    "source": source_name,
+                    "image_url": image_url
                 }
                 
                 processed_news.append(news_item)
-                print(f"  📌 [{source_name}] {title[:40]}...")
+                print(f"  📌 [{source_name}] {title[:40]}... (عکس: {'دارد' if image_url else 'ندارد'})")
                 
         except Exception as e:
             print(f"❌ خطا در دریافت اخبار از {source_name}: {e}")
@@ -121,7 +152,7 @@ def fetch_multi_source_news():
     return processed_news
 
 # ----------------------------------------------------
-# ۵. ذخیره‌سازی اخبار در Supabase
+# ۶. ذخیره‌سازی اخبار در Supabase
 # ----------------------------------------------------
 def save_news_to_supabase(news_list):
     """ثبت اخبار در جدول news دیتابیس سوبابیس"""
@@ -143,7 +174,7 @@ def save_news_to_supabase(news_list):
             print(f"❌ خطا در ثبت خبر در دیتابیس: {e}")
 
 # ----------------------------------------------------
-# ۶. نقطه ورود و اجرای اصلی اسکریپت
+# ۷. نقطه ورود و اجرای اصلی اسکریپت
 # ----------------------------------------------------
 def main():
     print("🚀 شروع به کار ربات اخبار و قیمت‌های بازار...")
